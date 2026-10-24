@@ -1,0 +1,47 @@
+---
+# Supply values with -e @vars.local.yml. Never put credentials in this file.
+tenancy_ocid: ''
+home_region: ''
+default_domain_ocid: ''
+oci_config_file: "{{ lookup('env', 'HOME') }}/.oci/config"
+oci_profile: DEFAULT
+
+compartment_name: oagTest
+instance_name: oagTest
+# OCI API enum; NEW_LICENSE corresponds to a new subscription. Confirm entitlement.
+license_type: NEW_LICENSE
+instance_wait_timeout: 3600
+# Some tenancies require an IDCS token for provisioning; inject through environment.
+idcs_access_token: "{{ lookup('env', 'OAG_IDCS_ACCESS_TOKEN') }}"
+
+connector_username: agcs_user
+connector_group_name: agcs_group
+connector_email: ''
+admin_username: ''
+admin_given_name: ''
+admin_family_name: ''
+admin_email: ''
+admin_group_name: oag_admin_group
+connector_policy_name: OCI_AGCS
+admin_policy_name: OAG_TEST_ADMIN
+
+artifact_dir: '{{ playbook_dir }}/artifacts'
+key_dir: '{{ artifact_dir }}/keys'
+# Preserve these files on later runs; keys are only generated at deployment time.
+api_key_bits: 3072
+
+# Desired OAG activation configuration. This is a console handoff, NOT an API payload.
+# Empty = no activation recommendation; never interpreted as all domains/identities.
+activation_domain_ocids: []
+activation_named_identities: []
+activation_excluded_identities: []
+# Restrict to enabled identities as shown in your ingested attribute values.
+activation_status_value: Enabled
+oci_connected_system_name: OCITenancyOagTest
+# Other systems need connector-specific configuration and credentials; no assumed targets.
+additional_connected_systems: []
+
+# Optional role grant after the instance's IAM application has appeared.
+# Supply SCIM IDs (not OCIDs) for the app and its Administrator application role.
+oag_application_id: ''
+oag_administrator_role_id: ''

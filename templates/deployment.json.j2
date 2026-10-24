@@ -1,0 +1,21 @@
+{{ {
+  'tenancy_ocid': tenancy_ocid,
+  'home_region': home_region,
+  'identity_domain_ocid': default_domain_ocid,
+  'compartment_ocid': child.compartment.id,
+  'instance_ocid': governance.governance_instance.id,
+  'instance_url': governance.governance_instance.instance_url,
+  'connector_user_ocid': identities.connector_user_ocid,
+  'admin_user_ocid': identities.admin_user_ocid,
+  'admin_group_scim_id': identities.admin_group_id,
+  'application_role_assigned': (oag_application_id | length > 0),
+  'oci_connected_system_name': oci_connected_system_name,
+  'desired_activation': {
+    'domain_allowlist': activation_domain_ocids,
+    'status': activation_status_value,
+    'included_named_identities': activation_named_identities,
+    'excluded_identities': activation_excluded_identities
+  },
+  'additional_connected_systems': additional_connected_systems,
+  'onboarding_status': 'PENDING_CONSOLE_CONFIGURATION'
+} | to_nice_json }}

@@ -1,0 +1,173 @@
+---
+- name: Provision OCI Access Governance in a child compartment
+  hosts: local
+  gather_facts: false
+  environment:
+    OCI_USE_NAME_AS_IDENTIFIER: '1'
+  module_defaults:
+    oracle.oci.oci_identity_region_subscription_facts: &oci_auth
+      config_file_location: '{{ oci_config_file }}'
+      config_profile_name: '{{ oci_profile }}'
+      region: '{{ home_region }}'
+    oracle.oci.oci_identity_compartment: *oci_auth
+    oracle.oci.oci_identity_api_key: *oci_auth
+    oracle.oci.oci_identity_policy: *oci_auth
+    oracle.oci.oci_object_storage_namespace_facts: *oci_auth
+    oracle.oci.oci_access_governance_cp_governance_instance: *oci_auth
+  tasks:
+    - name: Validate deployment parameters before making changes
+      ansible.builtin.assert:
+        that:
+          - not ansible_check_mode
+          - tenancy_ocid is match('^ocid1\.tenancy\.')
+          - default_domain_ocid is match('^ocid1\.domain\.')
+          - "'REPLACE' not in tenancy_ocid"
+          - "'REPLACE' not in default_domain_ocid"
+          - home_region | length > 0
+          - admin_username | length > 0
+          - admin_given_name | length > 0
+          - admin_family_name | length > 0
+          - admin_email is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
+          - connector_email is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
+          - admin_username != connector_username
+          - admin_group_name != connector_group_name
+          - license_type in ['NEW_LICENSE', 'BRING_YOUR_OWN_LICENSE', 'AG_ORACLE_WORKLOADS', 'AG_OCI']
+          - activation_domain_ocids is sequence and activation_domain_ocids is not string
+          - activation_named_identities is sequence and activation_named_identities is not string
+          - activation_excluded_identities is sequence and activation_excluded_identities is not string
+          - (oag_application_id | length > 0) == (oag_administrator_role_id | length > 0)
+        fail_msg: Fill the parameters in vars.local.yml; see vars.example.yml.
+
+    - name: Validate each domain selected for activation
+      ansible.builtin.assert:
+        that:
+          - item is match('^ocid1\.domain\.')
+          - "'REPLACE' not in item"
+        fail_msg: Every activation domain must be a real domain OCID.
+      loop: '{{ activation_domain_ocids }}'
+
+    - name: Verify that the selected region is the tenancy home region
+      oracle.oci.oci_identity_region_subscription_facts:
+        tenancy_id: '{{ tenancy_ocid }}'
+      register: subscriptions
+
+    - name: Require the home region for OAG creation
+      ansible.builtin.assert:
+        that:
+          - home_region in (subscriptions.region_subscriptions | selectattr('is_home_region', 'equalto', true) | map(attribute='region_name') | list)
+        fail_msg: OAG must be provisioned in the tenancy home region.
+
+    - name: Prepare private local artifacts directory
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        mode: '0700'
+      loop:
+        - '{{ artifact_dir }}'
+        - '{{ key_dir }}'
+
+    - name: Create oagTest immediately under the root compartment
+      oracle.oci.oci_identity_compartment:
+        parent_compartment_id: '{{ tenancy_ocid }}'
+        name: '{{ compartment_name }}'
+        description: Oracle Access Governance test service
+        key_by: [name]
+        state: present
+        wait: true
+      register: child
+
+    - name: Create domain users, groups, and additive group memberships
+      oag_domain_bootstrap:
+        config_file: '{{ oci_config_file }}'
+        profile: '{{ oci_profile }}'
+        tenancy_ocid: '{{ tenancy_ocid }}'
+        region: '{{ home_region }}'
+        domain_ocid: '{{ default_domain_ocid }}'
+        connector_username: '{{ connector_username }}'
+        connector_email: '{{ connector_email }}'
+        connector_group: '{{ connector_group_name }}'
+        admin_username: '{{ admin_username }}'
+        admin_email: '{{ admin_email }}'
+        admin_given_name: '{{ admin_given_name }}'
+        admin_family_name: '{{ admin_family_name }}'
+        admin_group: '{{ admin_group_name }}'
+      register: identities
+
+    - name: Generate and register the connector and administrator API keys
+      ansible.builtin.include_tasks: tasks/api-key.yml
+      loop:
+        - label: connector
+          user_ocid: '{{ identities.connector_user_ocid }}'
+        - label: admin
+          user_ocid: '{{ identities.admin_user_ocid }}'
+      loop_control:
+        loop_var: api_identity
+
+    - name: Grant connector read and identity orchestration access across tenancy
+      oracle.oci.oci_identity_policy:
+        compartment_id: '{{ tenancy_ocid }}'
+        name: '{{ connector_policy_name }}'
+        description: OCI IAM connector for Oracle Access Governance
+        key_by: [name, compartment_id]
+        statements:
+          - 'Allow group id {{ identities.connector_group_ocid }} to read all-resources in tenancy'
+          - 'Allow group id {{ identities.connector_group_ocid }} to manage policies in tenancy'
+          - 'Allow group id {{ identities.connector_group_ocid }} to manage domains in tenancy'
+        state: present
+
+    - name: Grant administrator namespace read and child compartment instance management
+      oracle.oci.oci_identity_policy:
+        compartment_id: '{{ tenancy_ocid }}'
+        name: '{{ admin_policy_name }}'
+        description: Manage OAG only in the selected child compartment
+        key_by: [name, compartment_id]
+        statements:
+          - 'Allow group id {{ identities.admin_group_ocid }} to read objectstorage-namespace in tenancy'
+          - 'Allow group id {{ identities.admin_group_ocid }} to manage agcs-instance in compartment id {{ child.compartment.id }}'
+        state: present
+
+    - name: Read the Object Storage tenancy namespace for OAG provisioning
+      oracle.oci.oci_object_storage_namespace_facts:
+        compartment_id: '{{ tenancy_ocid }}'
+      register: namespace_info
+
+    - name: Create Access Governance instance and wait for completion
+      oracle.oci.oci_access_governance_cp_governance_instance:
+        compartment_id: '{{ child.compartment.id }}'
+        display_name: '{{ instance_name }}'
+        description: Oracle Access Governance in {{ compartment_name }}
+        license_type: '{{ license_type }}'
+        tenancy_namespace: '{{ namespace_info.namespace }}'
+        idcs_access_token: '{{ idcs_access_token | default(omit, true) }}'
+        key_by: [display_name, compartment_id]
+        state: present
+        wait: true
+        wait_timeout: '{{ instance_wait_timeout }}'
+      register: governance
+      no_log: true
+
+    - name: Assign the OAG Administrator application role if its SCIM IDs are supplied
+      oag_application_role:
+        config_file: '{{ oci_config_file }}'
+        profile: '{{ oci_profile }}'
+        region: '{{ home_region }}'
+        domain_ocid: '{{ default_domain_ocid }}'
+        app_id: '{{ oag_application_id }}'
+        role_id: '{{ oag_administrator_role_id }}'
+        group_id: '{{ identities.admin_group_id }}'
+      when: oag_application_id | length > 0
+
+    - name: Write non-secret deployment outputs and OAG console configuration
+      ansible.builtin.template:
+        src: templates/deployment.json.j2
+        dest: '{{ artifact_dir }}/deployment.json'
+        mode: '0600'
+
+    - name: Report provisioning and remaining service setup
+      ansible.builtin.debug:
+        msg:
+          - 'Instance: {{ governance.governance_instance.instance_url | default("See OCI Console") }}'
+          - 'Outputs: {{ artifact_dir }}/deployment.json'
+          - 'Keys and separate OCI profiles: {{ key_dir }}'
+          - 'Complete docs/ONBOARDING.md to connect OCI IAM and publish activation rules.'
+          - 'OAG Administrator application role assigned by this run: {{ oag_application_id | length > 0 }}'

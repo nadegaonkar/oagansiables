@@ -1,0 +1,6 @@
+---
+collections:
+  - name: oracle.oci
+    version: '5.5.0'
+  - name: community.crypto
+    version: '3.5.1'

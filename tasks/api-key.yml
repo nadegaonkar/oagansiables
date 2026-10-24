@@ -1,0 +1,39 @@
+---
+- name: Generate a persistent RSA private key for {{ api_identity.label }}
+  community.crypto.openssl_privatekey:
+    path: '{{ key_dir }}/{{ api_identity.label }}.pem'
+    type: RSA
+    size: '{{ api_key_bits }}'
+    mode: '0600'
+    regenerate: never
+  no_log: true
+
+- name: Export PEM public key for {{ api_identity.label }}
+  community.crypto.openssl_publickey:
+    path: '{{ key_dir }}/{{ api_identity.label }}_public.pem'
+    privatekey_path: '{{ key_dir }}/{{ api_identity.label }}.pem'
+    mode: '0600'
+
+- name: Register public API key for {{ api_identity.label }}
+  oracle.oci.oci_identity_api_key:
+    user_id: '{{ api_identity.user_ocid }}'
+    key: "{{ lookup('ansible.builtin.file', key_dir ~ '/' ~ api_identity.label ~ '_public.pem') }}"
+    state: present
+  register: registered_key
+  retries: 12
+  delay: 10
+  until: registered_key is succeeded
+  no_log: true
+
+- name: Write OCI API profile for {{ api_identity.label }}
+  ansible.builtin.copy:
+    dest: '{{ key_dir }}/{{ api_identity.label }}_oci_config'
+    mode: '0600'
+    content: |
+      [DEFAULT]
+      user={{ api_identity.user_ocid }}
+      fingerprint={{ registered_key.api_key.fingerprint }}
+      tenancy={{ tenancy_ocid }}
+      region={{ home_region }}
+      key_file={{ key_dir }}/{{ api_identity.label }}.pem
+

@@ -1,0 +1,31 @@
+---
+tenancy_ocid: ocid1.tenancy.oc1..REPLACE
+home_region: ap-mumbai-1  # Replace with YOUR tenancy home region.
+default_domain_ocid: ocid1.domain.oc1..REPLACE
+oci_profile: DEFAULT
+connector_email: oag-connector@example.com
+admin_username: oag_admin
+admin_given_name: OAG
+admin_family_name: Administrator
+admin_email: oag-admin@example.com
+compartment_name: oagTest
+instance_name: oagTest
+license_type: NEW_LICENSE
+
+# Console membership expression: (Domain=A OR Domain=B) AND Status=Enabled.
+# Named identity inclusions and exclusions are separate console selections.
+activation_domain_ocids:
+  - ocid1.domain.oc1..REPLACE
+activation_named_identities: []
+activation_excluded_identities:
+  - agcs_user
+activation_status_value: Enabled
+additional_connected_systems: []
+# Example entry only (no generic connector is deployed):
+# - name: CorporateHR
+#   type: Generic REST
+#   purpose: authoritative source
+
+# Optional: once OCI creates the service's IAM app, rerun with these SCIM IDs.
+oag_application_id: ''
+oag_administrator_role_id: ''
